@@ -10,6 +10,50 @@
 - ⊘ **跳过功能**: 不确定的案例可以先跳过
 - 📊 **进度显示**: 实时显示标注进度
 - 🔄 **自动保存**: 每标注10个案例自动保存一次
+- 🎲 **随机模式**: 支持随机顺序标注，适合多人协作
+- 👥 **多人协作**: 不同标注者独立文件，可后期合并
+- 📁 **智能文件检测**: 自动检测并选择data/raw目录下的CSV文件
+
+## 数据文件要求
+
+### 必需的数据列
+
+原始CSV文件必须包含以下列：
+- **`full_text`** (必需): 事故案例的完整文本内容
+
+### 可选的数据列
+
+建议包含以下列以获得更好的标注体验：
+- **`title`**: 案例标题
+- **`url`**: 案例来源链接
+- **`publish_date`**: 发布日期
+- **`category`**: 事故类别
+
+### 文件放置位置
+
+将CSV文件放在 `data/raw/` 目录下：
+- 如果只有一个CSV文件，程序会自动读取
+- 如果有多个CSV文件，程序会列出让你选择
+
+## 目录结构
+
+```
+construction-accident-annotator/
+├── data/
+│   ├── raw/                    # 原始数据文件
+│   │   └── *.csv               # 任意名称的CSV文件
+│   └── annotated/              # 标注输出文件
+│       ├── accident_cases_annotated_张三.csv
+│       ├── accident_cases_annotated_张三.parquet
+│       ├── accident_cases_annotated_张三_progress.txt
+│       ├── accident_cases_annotated_张三_random_seed.txt
+│       └── accident_cases_annotated_张三_random_indices.txt
+├── main.py                     # 主程序
+├── utils.py                    # 工具函数
+├── merge_annotations.py        # 多人标注合并工具
+├── 启动标注工具.command        # macOS启动脚本
+└── 启动标注工具.bat            # Windows启动脚本
+```
 
 ## 安装依赖
 
@@ -18,20 +62,57 @@
 uv sync
 
 # 或使用 pip
-pip install pandas
+pip install pandas pyarrow
 ```
 
 ## 使用方法
 
-1. 确保 `accident_cases.csv` 文件在项目根目录
-2. 激活虚拟环境（如果使用）
-3. 运行程序：
+### 方式一：双击启动（推荐，适合非程序员）
+
+1. **准备数据**：
+   - 将CSV文件放在 `data/raw/` 目录下
+   - 确保CSV文件包含 `full_text` 列（必需）
+   - 文件名可以任意
+
+2. **启动程序**：
+   - **macOS/Linux**: 双击 `启动标注工具.command`
+   - **Windows**: 双击 `启动标注工具.bat`
+
+3. **选择文件**（如果有多个CSV）：
+   - 程序会列出所有CSV文件
+   - 输入文件序号选择要标注的文件
+
+4. 程序会自动检查环境和依赖，然后进入标注界面
+
+### 方式二：命令行启动（适合程序员）
+
+1. 准备数据
+
+将CSV文件放在 `data/raw/` 目录下，确保包含 `full_text` 列。
+
+2. 安装依赖
+
+```bash
+# 使用 uv（推荐）
+uv sync
+
+# 或使用 pip
+pip install pandas pyarrow
+```
+
+3. 启动程序
 
 ```bash
 python main.py
 ```
 
-## 操作说明
+### 交互式配置
+
+程序会依次询问：
+- **用户名/标注者ID**: 用于区分不同标注者的文件（例如：张三、李四）
+- **是否启用随机模式**: 多人协作时建议启用（输入 `y` 或 `n`）
+
+### 开始标注
 
 程序会逐条显示案例信息，包括：
 - 标题
@@ -39,6 +120,19 @@ python main.py
 - 分类
 - URL
 - 案例全文
+
+## 操作说明
+
+### 建筑业范围参考
+
+如果不确定某个案例是否属于建筑业，可以参考项目中的 `GB-T4757-2017.md` 文件，该文件包含了国家标准《国民经济行业分类》（GB/T 4754-2017）中建筑业的详细分类：
+
+- **房屋建筑业**：住宅、体育场馆等建筑
+- **土木工程建筑业**：道路、桥梁、隧道、管道、电力工程等
+- **建筑安装业**：电气安装、管道设备安装等
+- **建筑装饰装修业**：装饰、装修、拆除等
+
+简单来说，凡是涉及建筑施工、安装、装修的事故都属于建筑业。
 
 ### 标注选项
 
@@ -52,18 +146,52 @@ python main.py
 
 ## 输出文件
 
-标注结果会保存到 `accident_cases_annotated.csv`，包含原始数据的所有列，外加：
+标注结果会保存在 `data/annotated/` 目录下：
+
+- **accident_cases_annotated_[用户名].csv**: 人工审查用CSV文件
+- **accident_cases_annotated_[用户名].parquet**: 快速加载用Parquet文件
+- **accident_cases_annotated_[用户名]_progress.txt**: 进度记录
+- **accident_cases_annotated_[用户名]_random_seed.txt**: 随机种子（随机模式）
+- **accident_cases_annotated_[用户名]_random_indices.txt**: 随机索引映射（随机模式）
+
+### 标注结果字段
+
+CSV文件包含原始数据的所有列，外加：
 - **is_construction**: 标注结果
   - `1`: 建筑业案例
   - `0`: 非建筑业案例
   - `-1`: 跳过的案例
   - 空值: 未标注
 
+## 多人协作
+
+### 分工标注
+
+1. 每个标注者使用不同的用户名运行程序
+2. 建议启用随机模式，避免标注相同的案例
+3. 各自独立标注，互不干扰
+
+### 合并标注结果
+
+使用 `merge_annotations.py` 合并多人标注：
+
+```bash
+python merge_annotations.py \
+    data/annotated/accident_cases_annotated_张三.csv \
+    data/annotated/accident_cases_annotated_李四.csv \
+    data/annotated/accident_cases_annotated_王五.csv \
+    -o data/annotated/merged_result.csv
+```
+
+合并后会生成：
+- `merged_result.csv`: 合并结果
+- `merged_result_conflicts.csv`: 冲突案例（需要复议）
+
 ## 断点续传
 
-- 程序会自动保存进度到 `.annotation_progress.txt`
-- 下次运行时会询问是否继续之前的标注
-- 可以随时按 `q` 退出，下次继续
+- 程序每标注10个案例自动保存一次
+- 下次运行时自动从上次位置继续
+- 可以随时按 `q` 退出，进度会被保存
 
 ## 快捷键
 

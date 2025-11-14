@@ -40,7 +40,6 @@ def merge_annotations(files, output_file):
     # 添加合并相关的列
     base_df["annotation_count"] = 0  # 有多少人标注了这条
     base_df["is_construction_conflict"] = False  # 是否建筑业判断有冲突
-    base_df["code_conflict"] = False  # 分类代码是否有冲突
     base_df["annotators"] = ""  # 标注者列表
 
     # 统计
@@ -48,7 +47,6 @@ def merge_annotations(files, output_file):
         "total": total_cases,
         "annotated": 0,
         "construction_conflicts": 0,
-        "code_conflicts": 0,
         "agreement_rate": 0.0,
     }
 
@@ -57,7 +55,6 @@ def merge_annotations(files, output_file):
     for idx in range(total_cases):
         # 收集所有标注者对这条数据的标注
         is_construction_votes = []
-        code_votes = []
         annotator_ids = []
 
         for df_idx, df in enumerate(dfs):
@@ -67,12 +64,6 @@ def merge_annotations(files, output_file):
             ):
                 is_construction_votes.append(df.loc[idx, "is_construction"])
                 annotator_ids.append(f"A{df_idx + 1}")
-
-                # 如果标注为建筑业，收集分类代码
-                if df.loc[idx, "is_construction"] == 1:
-                    code = df.loc[idx, "construction_code_selected"]
-                    if pd.notna(code):
-                        code_votes.append(str(code))
 
         # 如果没有人标注这条，跳过
         if not is_construction_votes:
@@ -91,24 +82,11 @@ def merge_annotations(files, output_file):
             # 一致，使用该值
             base_df.loc[idx, "is_construction"] = is_construction_votes[0]
 
-            # 如果都标注为建筑业，检查分类代码
-            if is_construction_votes[0] == 1 and code_votes:
-                if len(set(code_votes)) > 1:
-                    # 代码有冲突
-                    base_df.loc[idx, "code_conflict"] = True
-                    base_df.loc[idx, "construction_code_selected"] = (
-                        pd.NA
-                    )  # 标记为待复议
-                    stats["code_conflicts"] += 1
-                elif len(code_votes) > 0:
-                    # 代码一致
-                    base_df.loc[idx, "construction_code_selected"] = code_votes[0]
-
         stats["annotated"] += 1
 
     # 计算一致性率
     if stats["annotated"] > 0:
-        conflicts = stats["construction_conflicts"] + stats["code_conflicts"]
+        conflicts = stats["construction_conflicts"]
         stats["agreement_rate"] = (
             (stats["annotated"] - conflicts) / stats["annotated"] * 100
         )
@@ -128,15 +106,11 @@ def merge_annotations(files, output_file):
     print(f"总案例数:         {stats['total']}")
     print(f"已标注案例数:     {stats['annotated']}")
     print(f"是否建筑业冲突:   {stats['construction_conflicts']}")
-    print(f"分类代码冲突:     {stats['code_conflicts']}")
     print(f"标注一致率:       {stats['agreement_rate']:.2f}%")
     print("=" * 80)
 
     # 导出冲突案例到单独文件
-    conflict_df = base_df[
-        (base_df["is_construction_conflict"] == True)
-        | (base_df["code_conflict"] == True)
-    ]
+    conflict_df = base_df[base_df["is_construction_conflict"]]
 
     if len(conflict_df) > 0:
         conflict_file = output_path.parent / f"{output_path.stem}_conflicts.csv"

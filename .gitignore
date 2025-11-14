@@ -9,6 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
-*.csv
+# Data files
+/data/annotated/*.csv
+/data/annotated/*.parquet
+/data/annotated/*_progress.txt
+/data/annotated/*_random_seed.txt
+/data/annotated/*_random_indices.txt
 
-*.parquet
+# Raw data files
+/data/raw/*.csv
