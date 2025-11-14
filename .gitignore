@@ -1,3 +1,9 @@
+# macOS
+.DS_Store
+
+# Python version management
+.python-version
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -20,7 +26,6 @@ env/
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Data files
 /data/annotated/*.csv
