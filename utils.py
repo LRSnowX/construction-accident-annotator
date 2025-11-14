@@ -21,24 +21,46 @@ def display_stats(df: pd.DataFrame):
     annotated_count = annotated_mask.sum()
     skipped_count = (df["is_construction"] == -1).sum()
 
+    # 统计已标注数据中建筑业和非建筑业的数量
+    construction_count = (df["is_construction"] == 1).sum()
+    non_construction_count = (df["is_construction"] == 0).sum()
+
     print("\n--- 统计信息 ---")
     print(f"  已标注: {annotated_count}")
+    if annotated_count > 0:
+        print(f"    └─ 建筑业: {construction_count}")
+        print(f"    └─ 非建筑业: {non_construction_count}")
     print(f"  已跳过: {skipped_count}")
     print(f"  未处理: {total_cases - annotated_count - skipped_count}")
     print(f"  总计:   {total_cases}")
     print("--------------------")
 
 
-def display_case(row, index, total):
+def display_case(row, index, total, random_mode=False):
     """显示单个案例信息"""
     clear_screen()
     print("=" * 80)
-    print(f"进度: {index + 1}/{total}")
+    if random_mode:
+        print(f"进度: 已完成 {index}/{total}，剩余 {total - index}")
+    else:
+        print(f"进度: 第 {index + 1}/{total} 条")
     print("=" * 80)
-    print(f"\n标题: {row['title']}")
-    print(f"\n发布日期: {row.get('publish_date', 'N/A')}")
-    print(f"\n分类: {row.get('category', 'N/A')}")
-    print(f"\nURL: {row['url']}")
+
+    # 只显示存在的字段（full_text除外，它在最后单独显示）
+    optional_fields = {
+        "title": "标题",
+        "publish_date": "发布日期",
+        "date": "日期",
+        "category": "分类",
+        "url": "链接",
+        "source": "来源",
+    }
+
+    for field, label in optional_fields.items():
+        if field in row.index and pd.notna(row[field]):
+            print(f"\n{label}: {row[field]}")
+
+    # 显示案例全文（必需字段）
     print("\n" + "-" * 80)
     print("案例全文:")
     print("-" * 80)

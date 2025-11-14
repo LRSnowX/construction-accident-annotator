@@ -106,12 +106,10 @@ def main():
         print(f"检测到快速加载文件，正在从 {output_parquet} 继续...")
         df = pd.read_parquet(output_parquet)
         start_index = load_progress(str(output_dir / base_output_name))
-        print(f"从第 {start_index + 1} 条继续标注")
     elif output_csv.exists():
         print(f"检测到已标注的CSV文件，正在从 {output_csv} 继续...")
         df = pd.read_csv(output_csv, encoding="utf-8-sig")
         start_index = load_progress(str(output_dir / base_output_name))
-        print(f"从第 {start_index + 1} 条继续标注")
     else:
         print(f"未找到标注文件，正在从原始文件 {input_file.name} 开始...")
         try:
@@ -120,10 +118,8 @@ def main():
             # 检查必需列
             if "full_text" not in df.columns:
                 print("\n❗ 错误: CSV文件中缺少必需的 'full_text' 列")
-                print("\n请确保原始CSV文件包含以下列：")
-                print("  - full_text: 事故案例文本（必需）")
-                print("  - title: 标题（可选）")
-                print("  - url: 链接（可选）")
+                print("\n请确保原始CSV文件包含 full_text 列（案例文本）")
+                print("其他列（如 title、url、date 等）为可选，程序会自动识别")
                 print("\n按回车键退出...")
                 input()
                 return
@@ -167,7 +163,10 @@ def main():
         indices = None
 
     print(f"\n共有 {total_cases} 个案例需要标注")
-    print(f"当前将从第 {start_index + 1} 条开始标注\n")
+    if random_mode:
+        print(f"当前进度: 已完成 {start_index} 条，剩余 {total_cases - start_index} 条")
+    else:
+        print(f"当前将从第 {start_index + 1} 条数据开始标注\n")
 
     # 初始化列
     if "is_construction" not in df.columns:
@@ -178,8 +177,14 @@ def main():
 
     print("=" * 80)
     print("准备开始标注...")
-    print(f"- 起始位置: 第 {start_index + 1} 条")
-    print(f"- 剩余数量: {total_cases - start_index} 条")
+    if random_mode:
+        print("- 标注模式: 随机顺序")
+        print(f"- 已完成: {start_index} 条")
+        print(f"- 剩余数量: {total_cases - start_index} 条")
+    else:
+        print("- 标注模式: 顺序标注")
+        print(f"- 起始位置: 第 {start_index + 1} 条数据")
+        print(f"- 剩余数量: {total_cases - start_index} 条")
     print("=" * 80)
     print("\n按回车键开始...")
     input()
@@ -189,7 +194,7 @@ def main():
             # 如果是随机模式，使用随机索引
             actual_index = indices[current_index] if indices else current_index
             row = df.iloc[actual_index]
-            display_case(row, current_index, total_cases)
+            display_case(row, current_index, total_cases, random_mode)
 
             if pd.notna(df.loc[actual_index, "is_construction"]):
                 label = df.loc[actual_index, "is_construction"]

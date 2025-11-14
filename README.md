@@ -69,8 +69,9 @@ pip install pandas pyarrow
 
 将CSV数据文件放在 `data/raw/` 目录下。
 
-**CSV文件必须包含以下列**：
-- `full_text` (必需): 事故案例的完整文本内容
+**CSV文件要求**：
+- `full_text` 列（必需）：事故案例的完整文本内容
+- 其他列（可选）：如 `title`、`url`、`date` 等，程序会自动识别并显示
 
 4. **启动程序**
 
@@ -249,7 +250,7 @@ python merge_annotations.py \
 <details>
 <summary><b>CSV文件必须是特定格式吗？</b></summary>
 
-只需包含 `full_text` 列即可。建议包含 `title`、`url` 等字段以获得更好体验。
+只需包含 `full_text` 列即可。其他字段（如 `title`、`url`、`date` 等）为可选，程序会自动识别并显示。
 </details>
 
 <details>
