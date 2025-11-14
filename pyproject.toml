@@ -1,10 +1,33 @@
 [project]
 name = "construction-accident-annotator"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "A simple and easy-to-use tool for manually annotating construction industry accident cases"
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = [
-    "pandas>=2.3.3",
-    "pyarrow>=22.0.0",
+requires-python = ">=3.8"
+authors = [
+    { name = "LRSnowX", email = "lrsnowx@gmail.com" }
 ]
+license = { text = "MIT" }
+keywords = ["annotation", "construction", "accident", "data-labeling", "machine-learning"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "pandas>=2.0.0",
+    "pyarrow>=10.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/LRSnowX/construction-accident-annotator"
+Repository = "https://github.com/LRSnowX/construction-accident-annotator"
+Issues = "https://github.com/LRSnowX/construction-accident-annotator/issues"
+Documentation = "https://github.com/LRSnowX/construction-accident-annotator/blob/main/README.md"
