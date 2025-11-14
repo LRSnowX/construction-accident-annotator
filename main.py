@@ -1,210 +1,241 @@
-import os
+import random
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-
-def clear_screen():
-    """清屏函数"""
-    os.system("clear" if os.name != "nt" else "cls")
-
-
-def display_case(row, index, total):
-    """显示单个案例信息"""
-    clear_screen()
-    print("=" * 80)
-    print(f"进度: {index + 1}/{total}")
-    print("=" * 80)
-    print(f"\n标题: {row['title']}")
-    print(f"\n发布日期: {row.get('publish_date', 'N/A')}")
-    print(f"\n分类: {row.get('category', 'N/A')}")
-    print(f"\nURL: {row['url']}")
-    print("\n" + "-" * 80)
-    print("案例全文:")
-    print("-" * 80)
-    print(f"\n{row['full_text']}\n")
-    print("=" * 80)
+from construction_categories import (
+    get_category_info,
+    is_valid_construction_code,
+    suggest_codes_from_text,
+)
+from utils import (
+    clear_screen,
+    display_case,
+    get_user_input,
+    load_progress,
+    save_progress,
+)
 
 
-def get_user_input():
-    """获取用户输入并验证"""
-    print("\n请标注此案例:")
-    print("  1 - 建筑业案例")
-    print("  0 - 非建筑业案例")
-    print("  s - 跳过此案例")
-    print("  u - 撤销上一个标注")
-    print("  q - 保存并退出")
-    print("\n请输入: ", end="", flush=True)
-
-    while True:
-        user_input = input().strip().lower()
-        if user_input in ["1", "0", "s", "skip", "u", "undo", "q", "quit"]:
-            return user_input
-        else:
-            print("无效输入，请输入 1, 0, s, u 或 q: ", end="", flush=True)
+def get_detailed_suggestions(row):
+    """获取详细的分类建议"""
+    text_for_suggestion = (
+        str(row.get("title", "") or "") + " " + str(row.get("full_text", "") or "")
+    )
+    return suggest_codes_from_text(text=text_for_suggestion, top_n=5)
 
 
-def save_progress(df, output_path, current_index):
-    """保存当前进度"""
-    # 保存标注结果
-    df.to_csv(output_path, index=False, encoding="utf-8-sig")
+def handle_construction_case(df, current_index, row):
+    """处理建筑业案例的标注和建议选择"""
+    df.loc[current_index, "is_construction"] = 1
+    suggestions = get_detailed_suggestions(row)
 
-    # 保存进度索引
-    progress_file = Path(output_path).parent / ".annotation_progress.txt"
-    with open(progress_file, "w") as f:
-        f.write(str(current_index))
+    selected_code = None
 
-    print(f"\n进度已保存到: {output_path}")
+    if suggestions:
+        print("\n系统建议的细分类:")
+        for i, (c, n, s) in enumerate(suggestions, start=1):
+            print(f"  {i}. {c} - {n} (score={s:.2f})")
+        print("  m. 手动输入代码")
+        print("  n. 无匹配/不选择")
 
+        sel_options = [str(i) for i in range(1, len(suggestions) + 1)] + ["m", "n"]
+        sel = input(f"请选择({','.join(sel_options)}, 回车跳过): ").strip().lower()
 
-def load_progress(output_path):
-    """加载上次的进度"""
-    progress_file = Path(output_path).parent / ".annotation_progress.txt"
-    if progress_file.exists():
-        with open(progress_file, "r") as f:
-            return int(f.read().strip())
-    return 0
+        if sel in sel_options and sel not in ["m", "n"]:
+            idx = int(sel) - 1
+            selected_code, _, _ = suggestions[idx]
+        elif sel == "m":
+            while True:
+                manual_code = input("请输入4位分类代码(例如4812): ").strip()
+                if is_valid_construction_code(manual_code):
+                    category_name = get_category_info(manual_code)["name"]
+                    confirm = (
+                        input(
+                            f"您输入的是: {manual_code} - {category_name}。确认吗? (y/n): "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    if confirm == "y":
+                        selected_code = manual_code
+                        break
+                else:
+                    print("无效代码，请重新输入。")
+    else:
+        print("\n未生成任何建议。")
+
+    df.loc[current_index, "construction_code_selected"] = (
+        selected_code if selected_code else pd.NA
+    )
+    print("✓ 已标注为: 建筑业案例")
 
 
 def main():
-    # 文件路径配置
-    input_file = "accident_cases.csv"
-    output_file = "accident_cases_annotated.csv"
+    # 检查命令行参数
+    random_mode = "--random" in sys.argv
+    annotator_id = None
 
-    # 检查输入文件是否存在
-    if not os.path.exists(input_file):
+    for arg in sys.argv:
+        if arg.startswith("--annotator="):
+            annotator_id = arg.split("=")[1]
+
+    input_file = "accident_cases.csv"
+    # 使用基础名称，如果有标注者ID则加上ID
+    if annotator_id:
+        base_output_name = f"accident_cases_annotated_{annotator_id}"
+    else:
+        base_output_name = "accident_cases_annotated"
+
+    output_parquet = f"{base_output_name}.parquet"
+    output_csv = f"{base_output_name}.csv"
+
+    if not Path(input_file).exists():
         print(f"错误: 找不到输入文件 '{input_file}'")
         return
 
-    # 读取CSV文件
-    print(f"正在读取文件: {input_file}")
-    try:
-        df = pd.read_csv(input_file, encoding="utf-8-sig")
-    except Exception as e:
-        print(f"读取文件失败: {e}")
-        return
+    # 优先从 Parquet 加载，否则从 CSV，最后从原始文件
+    if Path(output_parquet).exists():
+        print(f"检测到快速加载文件，正在从 {output_parquet} 继续...")
+        df = pd.read_parquet(output_parquet)
+        start_index = load_progress(base_output_name)
+        print(f"从第 {start_index + 1} 条继续标注")
+    elif Path(output_csv).exists():
+        print(f"检测到已标注的CSV文件，正在从 {output_csv} 继续...")
+        df = pd.read_csv(output_csv, encoding="utf-8-sig")
+        start_index = load_progress(base_output_name)
+        print(f"从第 {start_index + 1} 条继续标注")
+    else:
+        print(f"未找到标注文件，正在从原始文件 {input_file} 开始...")
+        try:
+            df = pd.read_csv(input_file, encoding="utf-8-sig")
+            start_index = 0
+        except Exception as e:
+            print(f"读取文件失败: {e}")
+            return
 
     total_cases = len(df)
-    print(f"共有 {total_cases} 个案例需要标注\n")
 
-    # 初始化或读取现有的标注列
-    if os.path.exists(output_file):
-        print(f"检测到已存在的标注文件: {output_file}")
-        response = input("是否继续之前的标注? (y/n): ").strip().lower()
-        if response == "y":
-            df = pd.read_csv(output_file, encoding="utf-8-sig")
-            start_index = load_progress(output_file)
-            print(f"从第 {start_index + 1} 条继续标注")
+    # 如果是随机模式，创建随机索引序列
+    if random_mode:
+        print("\n📊 随机标注模式已启用")
+        # 保存/加载随机种子以确保可重复性
+        seed_file = Path(f"{base_output_name}_random_seed.txt")
+        if seed_file.exists():
+            with open(seed_file, "r") as f:
+                seed = int(f.read().strip())
         else:
-            start_index = 0
-            if "is_construction" not in df.columns:
-                df["is_construction"] = pd.NA
+            seed = random.randint(0, 999999)
+            with open(seed_file, "w") as f:
+                f.write(str(seed))
+
+        random.seed(seed)
+        # 创建随机索引列表
+        indices = list(range(total_cases))
+        random.shuffle(indices)
+
+        # 保存/加载索引映射
+        index_file = Path(f"{base_output_name}_random_indices.txt")
+        if not index_file.exists():
+            with open(index_file, "w") as f:
+                f.write(",".join(map(str, indices)))
+        else:
+            with open(index_file, "r") as f:
+                indices = list(map(int, f.read().strip().split(",")))
     else:
-        start_index = 0
-        if "is_construction" not in df.columns:
-            df["is_construction"] = pd.NA
+        indices = None
 
-    # 标注历史记录（用于撤销功能）
+    if annotator_id:
+        print(f"👤 标注者ID: {annotator_id}")
+
+    print(f"\n共有 {total_cases} 个案例需要标注")
+    print(f"当前将从第 {start_index + 1} 条开始标注\n")
+
+    # 初始化列
+    for col in [
+        "is_construction",
+        "construction_code_selected",
+    ]:
+        if col not in df.columns:
+            df[col] = pd.NA
+
     annotation_history = []
-
-    # 开始标注流程
     current_index = start_index
+
+    print("=" * 80)
+    print("准备开始标注...")
+    print(f"- 起始位置: 第 {start_index + 1} 条")
+    print(f"- 剩余数量: {total_cases - start_index} 条")
+    print("=" * 80)
+    print("\n按回车键开始...")
+    input()
 
     try:
         while current_index < total_cases:
-            row = df.iloc[current_index]
-
-            # 显示案例
+            # 如果是随机模式，使用随机索引
+            actual_index = indices[current_index] if indices else current_index
+            row = df.iloc[actual_index]
             display_case(row, current_index, total_cases)
 
-            # 如果已经标注过，显示之前的标注
-            if pd.notna(df.loc[current_index, "is_construction"]):
-                current_label = df.loc[current_index, "is_construction"]
-                if current_label == -1:
-                    print("\n[此案例之前被跳过]")
-                else:
-                    print(
-                        f"\n[此案例之前已标注为: {'建筑业' if current_label == 1 else '非建筑业'}]"
-                    )
+            if pd.notna(df.loc[actual_index, "is_construction"]):
+                label = df.loc[actual_index, "is_construction"]
+                status = (
+                    "跳过" if label == -1 else ("建筑业" if label == 1 else "非建筑业")
+                )
+                print(f"\n[此案例之前已标注为: {status}]")
 
-            # 获取用户输入
             user_input = get_user_input()
 
-            # 处理用户输入
             if user_input == "1":
-                df.loc[current_index, "is_construction"] = 1
-                annotation_history.append(current_index)
-                print("✓ 已标注为: 建筑业案例")
+                handle_construction_case(df, actual_index, row)
+                annotation_history.append(actual_index)
                 current_index += 1
-
             elif user_input == "0":
-                df.loc[current_index, "is_construction"] = 0
-                annotation_history.append(current_index)
+                df.loc[actual_index, "is_construction"] = 0
+                annotation_history.append(actual_index)
                 print("✓ 已标注为: 非建筑业案例")
                 current_index += 1
-
             elif user_input in ["s", "skip"]:
-                df.loc[current_index, "is_construction"] = -1  # 用-1表示跳过
-                annotation_history.append(current_index)
+                df.loc[actual_index, "is_construction"] = -1
+                annotation_history.append(actual_index)
                 print("⊘ 已跳过此案例")
                 current_index += 1
-
             elif user_input in ["u", "undo"]:
                 if annotation_history:
-                    last_index = annotation_history.pop()
-                    df.loc[last_index, "is_construction"] = pd.NA
-                    current_index = last_index
+                    last_actual_index = annotation_history.pop()
+                    current_index = current_index - 1 if current_index > 0 else 0
+                    # 清理相关列
+                    for col in [
+                        "is_construction",
+                        "construction_code_selected",
+                    ]:
+                        df.loc[last_actual_index, col] = pd.NA
                     print("↶ 已撤销上一个标注")
-                    input("\n按回车键继续...")
                 else:
                     print("⚠ 没有可以撤销的标注")
-                    input("\n按回车键继续...")
-
             elif user_input in ["q", "quit"]:
                 print("\n正在保存并退出...")
-                save_progress(df, output_file, current_index)
-                print(f"已标注 {current_index - start_index} 个案例")
-                print("下次运行程序时可以继续标注")
+                save_progress(df, base_output_name, current_index)
                 return
 
-            # 自动保存（每标注10个案例保存一次）
-            if (current_index - start_index) % 10 == 0 and current_index > start_index:
-                save_progress(df, output_file, current_index)
+            if (current_index - start_index) > 0 and (
+                current_index - start_index
+            ) % 10 == 0:
+                save_progress(df, base_output_name, current_index)
 
-        # 全部标注完成
         clear_screen()
-        print("=" * 80)
         print("🎉 恭喜！所有案例标注完成！")
-        print("=" * 80)
+        save_progress(df, base_output_name, current_index)
 
-        # 保存最终结果
-        save_progress(df, output_file, current_index)
-
-        # 显示统计信息
-        construction_count = (df["is_construction"] == 1).sum()
-        non_construction_count = (df["is_construction"] == 0).sum()
-        skipped_count = (df["is_construction"] == -1).sum()
-
-        print("\n标注统计:")
-        print(f"  建筑业案例: {construction_count}")
-        print(f"  非建筑业案例: {non_construction_count}")
-        print(f"  跳过的案例: {skipped_count}")
-        print(f"  总计: {total_cases}")
-
-        # 删除进度文件
-        progress_file = Path(output_file).parent / ".annotation_progress.txt"
+        progress_file = Path(f"{base_output_name}_progress.txt")
         if progress_file.exists():
             progress_file.unlink()
 
-    except KeyboardInterrupt:
-        print("\n\n检测到 Ctrl+C，正在保存进度...")
-        save_progress(df, output_file, current_index)
-        print(f"已标注 {current_index - start_index} 个案例")
-        print("下次运行程序时可以继续标注")
-    except Exception as e:
-        print(f"\n发生错误: {e}")
-        save_progress(df, output_file, current_index)
-        print("进度已保存")
+    except (KeyboardInterrupt, Exception) as e:
+        print(f"\n\n操作中断或发生错误: {e}")
+        print("正在紧急保存进度...")
+        save_progress(df, base_output_name, current_index)
 
 
 if __name__ == "__main__":
