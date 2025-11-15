@@ -1,6 +1,8 @@
 import json
 import re
+from collections import defaultdict
 from copy import deepcopy
+from math import exp, log, sqrt
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -354,8 +356,6 @@ def sigmoid(x: float) -> float:
         return 0.0
     if x > 50:
         return 1.0
-    from math import exp
-
     return 1.0 / (1.0 + exp(-x))
 
 
@@ -621,3 +621,195 @@ def format_hint_line(prob: float, contributors: List[Tuple[str, float]]) -> str:
     else:
         reason = ""
     return f"🔎 智能提示: 非建筑业概率约 {pct}%{reason}"
+
+
+# ==================== 增强版：在线 TF-IDF + 改进 LR ====================
+
+
+class OnlineTFIDF:
+    """在线 TF-IDF 特征提取器（增量更新文档频率）"""
+
+    def __init__(self, max_features: int = 300):
+        self.max_features = max_features
+        self.doc_count = 0
+        self.term_doc_freq: Dict[str, int] = defaultdict(int)  # 词在多少文档中出现过
+        self.vocabulary: Dict[str, int] = {}  # 词 -> 特征索引
+
+    def learn_one(self, tokens: List[str]):
+        """增量学习一个文档的词汇"""
+        self.doc_count += 1
+        unique_tokens = set(tokens)
+
+        # 更新文档频率
+        for tok in unique_tokens:
+            self.term_doc_freq[tok] += 1
+            # 动态扩展词表（限制大小）
+            if tok not in self.vocabulary and len(self.vocabulary) < self.max_features:
+                self.vocabulary[tok] = len(self.vocabulary)
+
+    def transform_one(self, tokens: List[str]) -> Dict[str, float]:
+        """将文档转换为 TF-IDF 特征向量"""
+        if self.doc_count == 0:
+            return {}
+
+        # 计算 TF（词频）
+        term_count = defaultdict(int)
+        for tok in tokens:
+            if tok in self.vocabulary:
+                term_count[tok] += 1
+
+        total_terms = len(tokens)
+        if total_terms == 0:
+            return {}
+
+        # 计算 TF-IDF
+        tfidf_feats: Dict[str, float] = {}
+        for tok, count in term_count.items():
+            if tok not in self.vocabulary:
+                continue
+
+            tf = count / total_terms
+            df = self.term_doc_freq.get(tok, 1)
+            # IDF = log((N + 1) / (df + 1))
+            idf = log((self.doc_count + 1) / (df + 1))
+            tfidf_feats[f"tfidf_{tok}"] = tf * idf
+
+        # L2 归一化
+        norm = sqrt(sum(v * v for v in tfidf_feats.values()))
+        if norm > 0:
+            tfidf_feats = {k: v / norm for k, v in tfidf_feats.items()}
+
+        return tfidf_feats
+
+    def to_dict(self) -> Dict:
+        return {
+            "doc_count": self.doc_count,
+            "term_doc_freq": dict(self.term_doc_freq),
+            "vocabulary": self.vocabulary,
+            "max_features": self.max_features,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict):
+        obj = cls(max_features=data.get("max_features", 300))
+        obj.doc_count = data.get("doc_count", 0)
+        obj.term_doc_freq = defaultdict(int, data.get("term_doc_freq", {}))
+        obj.vocabulary = data.get("vocabulary", {})
+        return obj
+
+
+def extract_features_enhanced(model: Dict, row) -> Dict[str, float]:
+    """增强版特征提取：关键词特征 + TF-IDF 特征"""
+    # 1. 原有关键词特征（二值）
+    keyword_feats = extract_features(row)
+
+    # 2. TF-IDF 特征（连续值）
+    tfidf_module = model.get("tfidf")
+    if tfidf_module is None:
+        # 首次使用，初始化
+        tfidf_module = OnlineTFIDF(max_features=300)
+        model["tfidf"] = tfidf_module
+
+    text = normalize_text(row)
+    tokens = _tokenize_for_learning(text)
+    tfidf_feats = tfidf_module.transform_one(tokens)
+
+    # 合并特征（关键词权重为1，TF-IDF权重为实际值）
+    all_feats: Dict[str, float] = {}
+    for k, v in keyword_feats.items():
+        all_feats[k] = float(v)
+    all_feats.update(tfidf_feats)
+
+    return all_feats
+
+
+def predict_non_construction_proba_enhanced(
+    model: Dict, features: Dict[str, float]
+) -> Tuple[float, List[Tuple[str, float]]]:
+    """增强版预测（支持连续值特征）"""
+    w = model["weights"]
+    z = model.get("bias", 0.0)
+    contributions: List[Tuple[str, float]] = []
+
+    for name, x in features.items():
+        if x == 0:
+            continue
+        weight = w.get(name, 0.0)
+        c = weight * x
+        contributions.append((name, c))
+        z += c
+
+    p = sigmoid(z)
+    contributions.sort(key=lambda t: abs(t[1]), reverse=True)
+    return p, contributions[:5]
+
+
+def update_model_online_enhanced(
+    model: Dict, row, features: Dict[str, float], label_non_construction: int
+) -> Dict:
+    """增强版在线更新（L2正则化 + 自适应学习率）"""
+    # 记录训练次数（用于自适应学习率）
+    n_updates = model.get("n_updates", 0) + 1
+    model["n_updates"] = n_updates
+
+    # 自适应学习率：lr_t = lr_0 / sqrt(t)
+    adaptive_lr = LEARNING_RATE / sqrt(n_updates)
+
+    # L2 正则化系数
+    l2_lambda = 0.01
+
+    # 预测
+    p, _ = predict_non_construction_proba_enhanced(model, features)
+    error = label_non_construction - p
+
+    # 更新偏置
+    delta_bias = adaptive_lr * error
+    model["bias"] = model.get("bias", 0.0) + delta_bias
+
+    # 更新权重（带 L2 正则化）
+    delta_w: Dict[str, float] = {}
+    for name, x in features.items():
+        if x == 0:
+            continue
+        old_w = model["weights"].get(name, 0.0)
+        # 梯度 = error * x - l2_lambda * w
+        gradient = error * x - l2_lambda * old_w
+        dw = adaptive_lr * gradient
+        model["weights"][name] = old_w + dw
+        delta_w[name] = dw
+
+    # 更新 TF-IDF 模块
+    tfidf_module = model.get("tfidf")
+    if tfidf_module is not None:
+        text = normalize_text(row)
+        tokens = _tokenize_for_learning(text)
+        tfidf_module.learn_one(tokens)
+
+    return {"bias": delta_bias, "weights": delta_w}
+
+
+def load_hint_model_enhanced(base_output_path: str) -> Dict:
+    """加载增强版模型（兼容旧版）"""
+    model = load_hint_model(base_output_path)
+
+    # 如果存在 TF-IDF 数据，恢复
+    if "tfidf" in model and isinstance(model["tfidf"], dict):
+        model["tfidf"] = OnlineTFIDF.from_dict(model["tfidf"])
+    else:
+        model["tfidf"] = OnlineTFIDF(max_features=300)
+
+    if "n_updates" not in model:
+        model["n_updates"] = 0
+
+    return model
+
+
+def save_hint_model_enhanced(base_output_path: str, model: Dict):
+    """保存增强版模型"""
+    # 序列化 TF-IDF 模块
+    model_copy = model.copy()
+    tfidf_module = model_copy.get("tfidf")
+    if tfidf_module is not None and hasattr(tfidf_module, "to_dict"):
+        model_copy["tfidf"] = tfidf_module.to_dict()
+
+    save_hint_model(base_output_path, model_copy)

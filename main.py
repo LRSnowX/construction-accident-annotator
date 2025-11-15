@@ -4,17 +4,17 @@ from pathlib import Path
 import pandas as pd
 
 from hints import (
-    extract_features,
+    extract_features_enhanced,
     format_hint_line,
     get_seed_load_summary,
-    load_hint_model,
+    load_hint_model_enhanced,
     maybe_expand_features,
-    predict_non_construction_proba,
+    predict_non_construction_proba_enhanced,
     remove_learned_features,
     rollback_token_stats,
     rollback_update,
-    save_hint_model,
-    update_model_online,
+    save_hint_model_enhanced,
+    update_model_online_enhanced,
     update_token_stats,
 )
 from utils import (
@@ -226,7 +226,7 @@ def main():
 
     # 加载智能提示模型
     base_output_path = str(output_dir / base_output_name)
-    hint_model = load_hint_model(base_output_path)
+    hint_model = load_hint_model_enhanced(base_output_path)
     # 打印关键词加载摘要
     try:
         print(get_seed_load_summary())
@@ -267,8 +267,10 @@ def main():
 
             # 智能提示（非建筑业概率）
             try:
-                feats = extract_features(row)
-                prob, contrib = predict_non_construction_proba(hint_model, feats)
+                feats = extract_features_enhanced(row)
+                prob, contrib = predict_non_construction_proba_enhanced(
+                    hint_model, feats
+                )
                 print(format_hint_line(prob, contrib))
             except Exception:
                 feats = None
@@ -288,7 +290,7 @@ def main():
                 annotation_history.append(actual_index)
                 # 在线更新（建筑业=0 -> 非建筑业概率应降低）
                 if feats is not None:
-                    lr_delta = update_model_online(
+                    lr_delta = update_model_online_enhanced(
                         hint_model, feats, label_non_construction=0
                     )
                     tok_delta = update_token_stats(
@@ -308,7 +310,7 @@ def main():
                 print("✓ 已标注为: 非建筑业案例")
                 # 在线更新（非建筑业=1 -> 非建筑业概率应升高）
                 if feats is not None:
-                    lr_delta = update_model_online(
+                    lr_delta = update_model_online_enhanced(
                         hint_model, feats, label_non_construction=1
                     )
                     tok_delta = update_token_stats(
@@ -381,7 +383,7 @@ def main():
                 save_progress(df, str(output_dir / base_output_name), current_index)
                 # 同步保存模型
                 try:
-                    save_hint_model(base_output_path, hint_model)
+                    save_hint_model_enhanced(base_output_path, hint_model)
                 except Exception:
                     pass
 
@@ -389,7 +391,7 @@ def main():
         print("🎉 恭喜！所有案例标注完成！")
         save_progress(df, str(output_dir / base_output_name), current_index)
         try:
-            save_hint_model(base_output_path, hint_model)
+            save_hint_model_enhanced(base_output_path, hint_model)
         except Exception:
             pass
 
@@ -401,7 +403,7 @@ def main():
         print("正在紧急保存进度...")
         save_progress(df, str(output_dir / base_output_name), current_index)
         try:
-            save_hint_model(base_output_path, hint_model)
+            save_hint_model_enhanced(base_output_path, hint_model)
         except Exception:
             pass
 
