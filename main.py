@@ -194,14 +194,24 @@ def main():
             # 如果是随机模式，使用随机索引
             actual_index = indices[current_index] if indices else current_index
             row = df.iloc[actual_index]
+
+            # 检查是否已标注（非空且不等于-1表示已标注）
+            if (
+                pd.notna(df.loc[actual_index, "is_construction"])
+                and df.loc[actual_index, "is_construction"] != -1
+            ):
+                # 已标注，自动跳过
+                current_index += 1
+                continue
+
             display_case(row, current_index, total_cases, random_mode)
 
-            if pd.notna(df.loc[actual_index, "is_construction"]):
-                label = df.loc[actual_index, "is_construction"]
-                status = (
-                    "跳过" if label == -1 else ("建筑业" if label == 1 else "非建筑业")
-                )
-                print(f"\n[此案例之前已标注为: {status}]")
+            # 显示是否之前被跳过
+            if (
+                pd.notna(df.loc[actual_index, "is_construction"])
+                and df.loc[actual_index, "is_construction"] == -1
+            ):
+                print("\n[此案例之前被跳过]")
 
             user_input = get_user_input()
 
