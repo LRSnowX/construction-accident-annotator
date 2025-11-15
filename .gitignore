@@ -33,6 +33,7 @@ env/
 /data/annotated/*_progress.txt
 /data/annotated/*_random_seed.txt
 /data/annotated/*_random_indices.txt
+/data/annotated/.last_user
 
 # Raw data files (keep structure, ignore content)
 /data/raw/*.csv

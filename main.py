@@ -23,16 +23,44 @@ def main():
     print("                     建筑业事故案例标注系统")
     print("=" * 80)
 
+    # 设置文件路径
+    output_dir = Path("data/annotated")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 尝试读取上次使用的用户名
+    last_user_file = output_dir / ".last_user"
+    last_user = None
+    if last_user_file.exists():
+        try:
+            with open(last_user_file, "r", encoding="utf-8") as f:
+                last_user = f.read().strip()
+        except Exception:
+            pass
+
     # 交互式询问用户名
     print("\n📝 请输入您的用户名/标注者ID（用于区分不同标注者的文件）")
-    annotator_id = input("   用户名: ").strip()
-
-    # 如果未输入，使用默认值
-    if not annotator_id:
-        annotator_id = "default"
-        print(f"   ⚠️  未输入用户名，使用默认值: {annotator_id}")
+    if last_user:
+        print(f"   上次使用: {last_user}")
+        annotator_id = input(f"   用户名 (直接回车使用 '{last_user}'): ").strip()
+        if not annotator_id:
+            annotator_id = last_user
+            print(f"   ✓ 继续使用: {annotator_id}")
+        else:
+            print(f"   ✓ 用户名: {annotator_id}")
     else:
-        print(f"   ✓ 用户名: {annotator_id}")
+        annotator_id = input("   用户名: ").strip()
+        if not annotator_id:
+            annotator_id = "default"
+            print(f"   ⚠️  未输入用户名，使用默认值: {annotator_id}")
+        else:
+            print(f"   ✓ 用户名: {annotator_id}")
+
+    # 保存用户名供下次使用
+    try:
+        with open(last_user_file, "w", encoding="utf-8") as f:
+            f.write(annotator_id)
+    except Exception:
+        pass
 
     # 交互式询问是否使用随机模式
     print("\n🎲 是否启用随机标注模式？（多人协作时建议启用，避免冲突）")
@@ -162,29 +190,39 @@ def main():
     else:
         indices = None
 
-    print(f"\n共有 {total_cases} 个案例需要标注")
-    if random_mode:
-        print(f"当前进度: 已完成 {start_index} 条，剩余 {total_cases - start_index} 条")
-    else:
-        print(f"当前将从第 {start_index + 1} 条数据开始标注\n")
-
     # 初始化列
     if "is_construction" not in df.columns:
         df["is_construction"] = pd.NA
 
+    # 计算实际已标注的数量（不包括跳过的）
+    already_annotated = (
+        (df["is_construction"].notna()) & (df["is_construction"] != -1)
+    ).sum()
+    total_unannotated = total_cases - already_annotated
+
+    print(f"\n共有 {total_cases} 个案例需要标注")
+    if random_mode:
+        print(f"已标注: {already_annotated} 条，剩余: {total_unannotated} 条")
+        print(f"(随机模式: 将从第 {start_index + 1} 个随机位置继续)")
+    else:
+        print(f"已标注: {already_annotated} 条，剩余: {total_unannotated} 条")
+        print(f"当前将从第 {start_index + 1} 条数据开始标注\n")
+
     annotation_history = []
     current_index = start_index
+    annotated_count = 0  # 记录本次会话实际标注的数量
 
     print("=" * 80)
     print("准备开始标注...")
     if random_mode:
         print("- 标注模式: 随机顺序")
-        print(f"- 已完成: {start_index} 条")
-        print(f"- 剩余数量: {total_cases - start_index} 条")
+        print(f"- 已标注: {already_annotated} 条")
+        print(f"- 剩余数量: {total_unannotated} 条")
     else:
         print("- 标注模式: 顺序标注")
+        print(f"- 已标注: {already_annotated} 条")
         print(f"- 起始位置: 第 {start_index + 1} 条数据")
-        print(f"- 剩余数量: {total_cases - start_index} 条")
+        print(f"- 剩余数量: {total_unannotated} 条")
     print("=" * 80)
     print("\n按回车键开始...")
     input()
@@ -193,7 +231,6 @@ def main():
         while current_index < total_cases:
             # 如果是随机模式，使用随机索引
             actual_index = indices[current_index] if indices else current_index
-            row = df.iloc[actual_index]
 
             # 检查是否已标注（非空且不等于-1表示已标注）
             if (
@@ -204,6 +241,7 @@ def main():
                 current_index += 1
                 continue
 
+            row = df.iloc[actual_index]
             display_case(row, current_index, total_cases, random_mode)
 
             # 显示是否之前被跳过
@@ -219,23 +257,39 @@ def main():
                 handle_construction_case(df, actual_index, row)
                 annotation_history.append(actual_index)
                 current_index += 1
+                annotated_count += 1
             elif user_input == "0":
                 df.loc[actual_index, "is_construction"] = 0
                 annotation_history.append(actual_index)
                 print("✓ 已标注为: 非建筑业案例")
                 current_index += 1
+                annotated_count += 1
             elif user_input in ["s", "skip"]:
                 df.loc[actual_index, "is_construction"] = -1
                 annotation_history.append(actual_index)
                 print("⊘ 已跳过此案例")
                 current_index += 1
+                annotated_count += 1
             elif user_input in ["u", "undo"]:
                 if annotation_history:
                     last_actual_index = annotation_history.pop()
-                    current_index = current_index - 1 if current_index > 0 else 0
                     # 清理相关列
                     df.loc[last_actual_index, "is_construction"] = pd.NA
                     print("↶ 已撤销上一个标注")
+                    annotated_count = max(0, annotated_count - 1)
+
+                    # 在随机模式下，需要找到last_actual_index在indices中的位置
+                    if indices:
+                        try:
+                            # 找到上一个标注案例在随机序列中的位置
+                            last_position = indices.index(last_actual_index)
+                            current_index = last_position
+                        except ValueError:
+                            # 如果找不到，保持当前位置不变
+                            pass
+                    else:
+                        # 顺序模式下，直接回退到该索引
+                        current_index = last_actual_index
                 else:
                     print("⚠ 没有可以撤销的标注")
             elif user_input in ["q", "quit"]:
@@ -243,9 +297,8 @@ def main():
                 save_progress(df, str(output_dir / base_output_name), current_index)
                 return
 
-            if (current_index - start_index) > 0 and (
-                current_index - start_index
-            ) % 10 == 0:
+            # 每实际标注10个案例自动保存（不包括自动跳过的）
+            if annotated_count > 0 and annotated_count % 10 == 0:
                 save_progress(df, str(output_dir / base_output_name), current_index)
 
         clear_screen()
