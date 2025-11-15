@@ -3,6 +3,20 @@ from pathlib import Path
 
 import pandas as pd
 
+from hints import (
+    extract_features,
+    format_hint_line,
+    get_seed_load_summary,
+    load_hint_model,
+    maybe_expand_features,
+    predict_non_construction_proba,
+    remove_learned_features,
+    rollback_token_stats,
+    rollback_update,
+    save_hint_model,
+    update_model_online,
+    update_token_stats,
+)
 from utils import (
     clear_screen,
     display_case,
@@ -10,12 +24,6 @@ from utils import (
     load_progress,
     save_progress,
 )
-
-
-def handle_construction_case(df, current_index, row):
-    """处理建筑业案例的标注"""
-    df.loc[current_index, "is_construction"] = 1
-    print("✓ 已标注为: 建筑业案例")
 
 
 def main():
@@ -134,10 +142,14 @@ def main():
         print(f"检测到快速加载文件，正在从 {output_parquet} 继续...")
         df = pd.read_parquet(output_parquet)
         start_index = load_progress(str(output_dir / base_output_name))
+        # 确保start_index不超过总案例数
+        start_index = min(start_index, len(df) - 1) if len(df) > 0 else 0
     elif output_csv.exists():
         print(f"检测到已标注的CSV文件，正在从 {output_csv} 继续...")
         df = pd.read_csv(output_csv, encoding="utf-8-sig")
         start_index = load_progress(str(output_dir / base_output_name))
+        # 确保start_index不超过总案例数
+        start_index = min(start_index, len(df) - 1) if len(df) > 0 else 0
     else:
         print(f"未找到标注文件，正在从原始文件 {input_file.name} 开始...")
         try:
@@ -164,29 +176,28 @@ def main():
     # 如果是随机模式，创建随机索引序列
     if random_mode:
         print("\n📊 随机标注模式已启用")
-        # 保存/加载随机种子以确保可重复性
-        seed_file = output_dir / f"{base_output_name}_random_seed.txt"
-        if seed_file.exists():
-            with open(seed_file, "r") as f:
-                seed = int(f.read().strip())
-        else:
-            seed = random.randint(0, 999999)
-            with open(seed_file, "w") as f:
-                f.write(str(seed))
-
-        random.seed(seed)
-        # 创建随机索引列表
-        indices = list(range(total_cases))
-        random.shuffle(indices)
 
         # 保存/加载索引映射
         index_file = output_dir / f"{base_output_name}_random_indices.txt"
-        if not index_file.exists():
-            with open(index_file, "w") as f:
-                f.write(",".join(map(str, indices)))
-        else:
+        if index_file.exists():
+            # 加载已保存的随机序列
             with open(index_file, "r") as f:
                 indices = list(map(int, f.read().strip().split(",")))
+            # 验证索引列表长度是否匹配
+            if len(indices) != total_cases:
+                print(
+                    f"⚠️  警告: 随机索引文件长度({len(indices)})与当前数据({total_cases})不匹配，将重新生成"
+                )
+                indices = list(range(total_cases))
+                random.shuffle(indices)
+                with open(index_file, "w") as f:
+                    f.write(",".join(map(str, indices)))
+        else:
+            # 第一次运行，生成新的随机序列
+            indices = list(range(total_cases))
+            random.shuffle(indices)
+            with open(index_file, "w") as f:
+                f.write(",".join(map(str, indices)))
     else:
         indices = None
 
@@ -209,8 +220,18 @@ def main():
         print(f"当前将从第 {start_index + 1} 条数据开始标注\n")
 
     annotation_history = []
+    update_history = []  # 存储模型增量用于撤销
     current_index = start_index
     annotated_count = 0  # 记录本次会话实际标注的数量
+
+    # 加载智能提示模型
+    base_output_path = str(output_dir / base_output_name)
+    hint_model = load_hint_model(base_output_path)
+    # 打印关键词加载摘要
+    try:
+        print(get_seed_load_summary())
+    except Exception:
+        pass
 
     print("=" * 80)
     print("准备开始标注...")
@@ -244,6 +265,14 @@ def main():
             row = df.iloc[actual_index]
             display_case(row, current_index, total_cases, random_mode)
 
+            # 智能提示（非建筑业概率）
+            try:
+                feats = extract_features(row)
+                prob, contrib = predict_non_construction_proba(hint_model, feats)
+                print(format_hint_line(prob, contrib))
+            except Exception:
+                feats = None
+
             # 显示是否之前被跳过
             if (
                 pd.notna(df.loc[actual_index, "is_construction"])
@@ -254,20 +283,50 @@ def main():
             user_input = get_user_input()
 
             if user_input == "1":
-                handle_construction_case(df, actual_index, row)
+                df.loc[actual_index, "is_construction"] = 1
+                print("✓ 已标注为: 建筑业案例")
                 annotation_history.append(actual_index)
+                # 在线更新（建筑业=0 -> 非建筑业概率应降低）
+                if feats is not None:
+                    lr_delta = update_model_online(
+                        hint_model, feats, label_non_construction=0
+                    )
+                    tok_delta = update_token_stats(
+                        hint_model, row, label_non_construction=0
+                    )
+                    new_feats = maybe_expand_features(hint_model)
+                    update_history.append(
+                        {"lr": lr_delta, "tok": tok_delta, "new": new_feats}
+                    )
+                else:
+                    update_history.append(None)
                 current_index += 1
                 annotated_count += 1
             elif user_input == "0":
                 df.loc[actual_index, "is_construction"] = 0
                 annotation_history.append(actual_index)
                 print("✓ 已标注为: 非建筑业案例")
+                # 在线更新（非建筑业=1 -> 非建筑业概率应升高）
+                if feats is not None:
+                    lr_delta = update_model_online(
+                        hint_model, feats, label_non_construction=1
+                    )
+                    tok_delta = update_token_stats(
+                        hint_model, row, label_non_construction=1
+                    )
+                    new_feats = maybe_expand_features(hint_model)
+                    update_history.append(
+                        {"lr": lr_delta, "tok": tok_delta, "new": new_feats}
+                    )
+                else:
+                    update_history.append(None)
                 current_index += 1
                 annotated_count += 1
             elif user_input in ["s", "skip"]:
                 df.loc[actual_index, "is_construction"] = -1
                 annotation_history.append(actual_index)
                 print("⊘ 已跳过此案例")
+                update_history.append(None)
                 current_index += 1
                 annotated_count += 1
             elif user_input in ["u", "undo"]:
@@ -277,6 +336,26 @@ def main():
                     df.loc[last_actual_index, "is_construction"] = pd.NA
                     print("↶ 已撤销上一个标注")
                     annotated_count = max(0, annotated_count - 1)
+
+                    # 撤销上一次模型更新
+                    if update_history:
+                        last_delta = update_history.pop()
+                        try:
+                            if last_delta:
+                                if isinstance(last_delta, dict) and "lr" in last_delta:
+                                    rollback_update(
+                                        hint_model, last_delta.get("lr", {})
+                                    )
+                                    rollback_token_stats(
+                                        hint_model, last_delta.get("tok", {})
+                                    )
+                                    remove_learned_features(
+                                        hint_model, last_delta.get("new", [])
+                                    )
+                                else:
+                                    rollback_update(hint_model, last_delta)
+                        except Exception:
+                            pass
 
                     # 在随机模式下，需要找到last_actual_index在indices中的位置
                     if indices:
@@ -300,10 +379,19 @@ def main():
             # 每实际标注10个案例自动保存（不包括自动跳过的）
             if annotated_count > 0 and annotated_count % 10 == 0:
                 save_progress(df, str(output_dir / base_output_name), current_index)
+                # 同步保存模型
+                try:
+                    save_hint_model(base_output_path, hint_model)
+                except Exception:
+                    pass
 
         clear_screen()
         print("🎉 恭喜！所有案例标注完成！")
         save_progress(df, str(output_dir / base_output_name), current_index)
+        try:
+            save_hint_model(base_output_path, hint_model)
+        except Exception:
+            pass
 
         if progress_file.exists():
             progress_file.unlink()
@@ -312,6 +400,10 @@ def main():
         print(f"\n\n操作中断或发生错误: {e}")
         print("正在紧急保存进度...")
         save_progress(df, str(output_dir / base_output_name), current_index)
+        try:
+            save_hint_model(base_output_path, hint_model)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

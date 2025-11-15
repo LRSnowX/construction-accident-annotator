@@ -22,7 +22,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
+    "jieba>=0.42.1",
     "pandas>=2.0.0",
+    "pyahocorasick>=2.1.0",
     "pyarrow>=10.0.0",
 ]
 
