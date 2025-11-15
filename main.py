@@ -267,7 +267,7 @@ def main():
 
             # 智能提示（非建筑业概率）
             try:
-                feats = extract_features_enhanced(row)
+                feats = extract_features_enhanced(hint_model, row)
                 prob, contrib = predict_non_construction_proba_enhanced(
                     hint_model, feats
                 )
@@ -291,7 +291,7 @@ def main():
                 # 在线更新（建筑业=0 -> 非建筑业概率应降低）
                 if feats is not None:
                     lr_delta = update_model_online_enhanced(
-                        hint_model, feats, label_non_construction=0
+                        hint_model, row, feats, label_non_construction=0
                     )
                     tok_delta = update_token_stats(
                         hint_model, row, label_non_construction=0
@@ -311,7 +311,7 @@ def main():
                 # 在线更新（非建筑业=1 -> 非建筑业概率应升高）
                 if feats is not None:
                     lr_delta = update_model_online_enhanced(
-                        hint_model, feats, label_non_construction=1
+                        hint_model, row, feats, label_non_construction=1
                     )
                     tok_delta = update_token_stats(
                         hint_model, row, label_non_construction=1
