@@ -378,11 +378,17 @@ def load_hint_model(base_output_path: str) -> Dict:
         # 保护性合并（新关键词加入时）
         weights = DEFAULT_WEIGHTS.copy()
         weights.update(data.get("weights", {}))
-        return {
+        # 保留所有字段，兼容增强版
+        result = {
             "bias": data.get("bias", DEFAULT_BIAS),
             "weights": weights,
             "token_stats": data.get("token_stats", {}),
         }
+        # 保留增强版字段
+        for key in ["n_updates", "tfidf"]:
+            if key in data:
+                result[key] = data[key]
+        return result
     except Exception:
         return {
             "bias": DEFAULT_BIAS,
@@ -792,14 +798,19 @@ def load_hint_model_enhanced(base_output_path: str) -> Dict:
     """加载增强版模型（兼容旧版）"""
     model = load_hint_model(base_output_path)
 
-    # 如果存在 TF-IDF 数据，恢复
-    if "tfidf" in model and isinstance(model["tfidf"], dict):
-        model["tfidf"] = OnlineTFIDF.from_dict(model["tfidf"])
-    else:
-        model["tfidf"] = OnlineTFIDF(max_features=300)
+    # 确保 bias 字段存在
+    if "bias" not in model:
+        model["bias"] = 0.0
 
+    # 确保 n_updates 字段存在
     if "n_updates" not in model:
         model["n_updates"] = 0
+
+    # 如果存在 TF-IDF 数据，恢复为对象
+    if "tfidf" in model and isinstance(model["tfidf"], dict):
+        model["tfidf"] = OnlineTFIDF.from_dict(model["tfidf"])
+    elif "tfidf" not in model:
+        model["tfidf"] = OnlineTFIDF(max_features=300)
 
     return model
 
